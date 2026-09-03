@@ -11,7 +11,6 @@ interface Monitor {
   name: string;
   url: string;
   method: string;
-  interval_minutes: number;
   timeout_ms: number;
   status: 'Operational' | 'Down';
   created_at: string;
@@ -74,11 +73,11 @@ export async function GET(request: NextRequest) {
     // 3. Ping all monitors concurrently
     const pingPromises = monitors.map(async (monitor) => {
       const probe = await pingEndpoint(monitor.url, monitor.method, monitor.timeout_ms);
-      
+
       const newStatus = probe.isUp ? 'Operational' : 'Down';
       const stateTransitioned = monitor.status !== newStatus;
 
-      // Handle alerts on transition
+      // Handle alerts on state transition
       if (stateTransitioned) {
         await supabaseAdmin
           .from('monitors')

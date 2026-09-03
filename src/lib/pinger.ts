@@ -1,14 +1,16 @@
-export interface PingResult {
-  statusCode: number | null;
-  latencyMs: number;
-  isUp: boolean;
-  errorMessage: string | null;
-}
+
 
 /**
  * Pings an HTTP/HTTPS endpoint with strict timeout enforcement
  * and high-resolution latency measurement.
  */
+export interface PingResult {
+  isUp: boolean;
+  statusCode: number | null;
+  latencyMs: number;
+  errorMessage: string | null;
+}
+
 export async function pingEndpoint(
   url: string,
   method: string = 'GET',
@@ -16,7 +18,6 @@ export async function pingEndpoint(
 ): Promise<PingResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
   const startTime = performance.now();
 
   try {
@@ -24,45 +25,36 @@ export async function pingEndpoint(
       method,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Sentinel-Health-Probe/1.0',
+        'User-Agent': 'Sentinel-Monitor/1.0',
         'Accept': '*/*',
       },
-      // Prevents caching so we measure real network round-trip time
-      cache: 'no-store',
     });
 
-    const endTime = performance.now();
+    const latencyMs = Math.round(performance.now() - startTime);
     clearTimeout(timeoutId);
 
-    const latencyMs = Math.round(endTime - startTime);
     const isUp = response.status >= 200 && response.status < 400;
 
     return {
+      isUp,
       statusCode: response.status,
       latencyMs,
-      isUp,
       errorMessage: isUp ? null : `HTTP status ${response.status}`,
     };
   } catch (error: unknown) {
-    const endTime = performance.now();
     clearTimeout(timeoutId);
+    const latencyMs = Math.round(performance.now() - startTime);
 
-    const latencyMs = Math.round(endTime - startTime);
-    let errorMessage = 'Unknown network error';
-
+    let message = 'Unknown error';
     if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        errorMessage = `Request timed out after ${timeoutMs}ms`;
-      } else {
-        errorMessage = error.message;
-      }
+      message = error.name === 'AbortError' ? `Request timed out after ${timeoutMs}ms` : error.message;
     }
 
     return {
+      isUp: false,
       statusCode: null,
       latencyMs,
-      isUp: false,
-      errorMessage,
+      errorMessage: message,
     };
   }
 }
