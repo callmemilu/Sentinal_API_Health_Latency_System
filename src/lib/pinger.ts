@@ -1,9 +1,5 @@
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
-
-/**
- * Pings an HTTP/HTTPS endpoint with strict timeout enforcement
- * and high-resolution latency measurement.
- */
 export interface PingResult {
   isUp: boolean;
   statusCode: number | null;
@@ -11,50 +7,91 @@ export interface PingResult {
   errorMessage: string | null;
 }
 
-export async function pingEndpoint(
-  url: string,
-  method: string = 'GET',
-  timeoutMs: number = 5000
-): Promise<PingResult> {
+export interface MonitorRecord {
+  id: string;
+  url: string;
+  method?: string;
+  timeout_ms?: number;
+  status?: string;
+}
+
+/**
+ * Pings an HTTP/HTTPS endpoint with strict timeout enforcement,
+ * writes the resulting telemetry to Supabase, and updates monitor status.
+ */
+export async function pingEndpoint(monitor: MonitorRecord): Promise<PingResult> {
+  const url = monitor.url;
+  const method = monitor.method || "GET";
+  const timeoutMs = monitor.timeout_ms || 5000;
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const startTime = performance.now();
+
+  let isUp = false;
+  let statusCode: number | null = null;
+  let latencyMs = 0;
+  let errorMessage: string | null = null;
 
   try {
     const response = await fetch(url, {
       method,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Sentinel-Monitor/1.0',
-        'Accept': '*/*',
+        "User-Agent": "Sentinel-Monitor/1.0",
+        Accept: "*/*",
       },
     });
 
-    const latencyMs = Math.round(performance.now() - startTime);
+    latencyMs = Math.round(performance.now() - startTime);
     clearTimeout(timeoutId);
+    statusCode = response.status;
+    isUp = response.status >= 200 && response.status < 400;
 
-    const isUp = response.status >= 200 && response.status < 400;
-
-    return {
-      isUp,
-      statusCode: response.status,
-      latencyMs,
-      errorMessage: isUp ? null : `HTTP status ${response.status}`,
-    };
+    if (!isUp) {
+      errorMessage = `HTTP status ${response.status}`;
+    }
   } catch (error: unknown) {
     clearTimeout(timeoutId);
-    const latencyMs = Math.round(performance.now() - startTime);
+    latencyMs = Math.round(performance.now() - startTime);
+    isUp = false;
 
-    let message = 'Unknown error';
     if (error instanceof Error) {
-      message = error.name === 'AbortError' ? `Request timed out after ${timeoutMs}ms` : error.message;
+      errorMessage =
+        error.name === "AbortError"
+          ? `Request timed out after ${timeoutMs}ms`
+          : error.message;
+    } else {
+      errorMessage = "Unknown error";
     }
-
-    return {
-      isUp: false,
-      statusCode: null,
-      latencyMs,
-      errorMessage: message,
-    };
   }
+
+  // 1. Insert telemetry record into Supabase ping_logs
+  const { error: insertError } = await supabaseAdmin.from("ping_logs").insert({
+    monitor_id: monitor.id,
+    is_up: isUp, // <-- Add this line
+    status_code: statusCode,
+    latency_ms: latencyMs,
+    error_message: errorMessage,
+  });
+
+  if (insertError) {
+    console.error("🔴 Supabase ping_logs insert error:", insertError.message);
+  } else {
+    console.log(`🟢 Ping saved for ${url} -> ${statusCode ?? "ERR"} (${latencyMs}ms)`);
+  }
+
+  // 2. Update the monitor's operational status
+  const newStatus = isUp ? "Operational" : "Down";
+  await supabaseAdmin
+    .from("monitors")
+    .update({ status: newStatus })
+    .eq("id", monitor.id);
+
+  return {
+    isUp,
+    statusCode,
+    latencyMs,
+    errorMessage,
+  };
 }

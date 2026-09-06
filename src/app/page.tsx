@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import LatencyChart from '@/components/LatencyChart';
 import { Activity, CheckCircle2, Clock, Globe, AlertTriangle } from 'lucide-react';
 import AddMonitorModal from '@/components/AddMonitorModal';
+import CardActions from '@/components/CardActions';
 
 export const revalidate = 0;
 
@@ -44,28 +45,32 @@ export default async function DashboardPage() {
 
   // 2. Fetch recent logs for those monitors
   let pingLogs: PingLog[] = [];
-  if (monitorIds.length > 0) {
-    const { data: logs } = await supabaseAdmin
-      .from('ping_logs')
-      .select('*')
-      .in('monitor_id', monitorIds)
-      .order('created_at', { ascending: true })
-      .limit(100);
-    pingLogs = (logs as PingLog[]) || [];
-  }
+if (monitorIds.length > 0) {
+  const { data: logs } = await supabaseAdmin
+    .from('ping_logs')
+    .select('*')
+    .in('monitor_id', monitorIds)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  // Reverse so older points are on the left and newest are on the right
+  pingLogs = ((logs as PingLog[]) || []).reverse();
+}
 
   // 3. Compute top overview stats
   const totalMonitors = monitors.length;
   const operationalCount = monitors.filter((m) => m.status === 'Operational').length;
-  const uptimePercent = totalMonitors > 0 ? ((operationalCount / totalMonitors) * 100).toFixed(1) : '100.0';
+  const uptimePercent =
+    totalMonitors > 0 ? ((operationalCount / totalMonitors) * 100).toFixed(1) : '100.0';
 
   const validLatencies = pingLogs
     .map((l) => l.latency_ms)
     .filter((lat): lat is number => lat !== null);
 
-  const avgLatency = validLatencies.length > 0
-    ? Math.round(validLatencies.reduce((acc, curr) => acc + curr, 0) / validLatencies.length)
-    : 0;
+  const avgLatency =
+    validLatencies.length > 0
+      ? Math.round(validLatencies.reduce((acc, curr) => acc + curr, 0) / validLatencies.length)
+      : 0;
 
   return (
     <div className="min-h-screen p-8 max-w-6xl mx-auto space-y-8">
@@ -90,7 +95,9 @@ export default async function DashboardPage() {
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/50 flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Active Monitors</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
+              Active Monitors
+            </p>
             <p className="text-3xl font-bold text-white mt-1">{totalMonitors}</p>
           </div>
           <Globe className="h-8 w-8 text-blue-400 opacity-80" />
@@ -98,7 +105,9 @@ export default async function DashboardPage() {
 
         <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/50 flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Global Health</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
+              Global Health
+            </p>
             <p className="text-3xl font-bold text-emerald-400 mt-1">{uptimePercent}%</p>
           </div>
           <CheckCircle2 className="h-8 w-8 text-emerald-400 opacity-80" />
@@ -106,7 +115,9 @@ export default async function DashboardPage() {
 
         <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/50 flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Avg Latency</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
+              Avg Latency
+            </p>
             <p className="text-3xl font-bold text-white mt-1">{avgLatency} ms</p>
           </div>
           <Clock className="h-8 w-8 text-indigo-400 opacity-80" />
@@ -127,8 +138,14 @@ export default async function DashboardPage() {
           <div className="space-y-4">
             {monitors.map((m) => {
               const monitorLogs = pingLogs.filter((l) => l.monitor_id === m.id);
+              const latestLog = monitorLogs[monitorLogs.length - 1];
+
               const chartData = monitorLogs.map((l) => ({
-                time: new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                time: new Date(l.created_at).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                }),
                 latency: l.latency_ms || 0,
                 status: l.status_code || 0,
               }));
@@ -151,23 +168,50 @@ export default async function DashboardPage() {
                               : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                           }`}
                         >
-                          {isUp ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                          {isUp ? (
+                            <CheckCircle2 className="h-3 w-3" />
+                          ) : (
+                            <AlertTriangle className="h-3 w-3" />
+                          )}
                           {m.status}
                         </span>
                       </div>
                       <p className="text-xs font-mono text-slate-400 mt-1">{m.url}</p>
                     </div>
 
+                    {/* Metadata and Action Buttons */}
                     <div className="flex items-center gap-4 text-xs font-mono text-slate-400">
-                      <span>Method: <strong className="text-slate-200">{m.method || 'GET'}</strong></span>
-                      <span>Timeout: <strong className="text-slate-200">{m.timeout_ms || 5000}ms</strong></span>
+                      <span>
+                        Method: <strong className="text-slate-200">{m.method || 'GET'}</strong>
+                      </span>
+                      <span>
+                        Timeout:{' '}
+                        <strong className="text-slate-200">{m.timeout_ms || 5000}ms</strong>
+                      </span>
+                      <CardActions monitorId={m.id} />
                     </div>
                   </div>
 
-                  {/* Chart area */}
+                  {/* Chart Area */}
                   <div className="border-t border-slate-800/60 pt-3">
-                    <p className="text-xs text-slate-400 font-medium mb-1">Recent Response Latency</p>
-                    <LatencyChart data={chartData} />
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-slate-400 font-medium">
+                        Recent Response Latency
+                      </p>
+                      <div className="flex items-center gap-3 text-[11px] font-mono">
+                        <span className="text-slate-400">
+                          Samples: <strong className="text-slate-200">{monitorLogs.length}</strong>
+                        </span>
+                        <span className="text-slate-400">
+                          Latest:{' '}
+                          <strong className="text-emerald-400">
+                            {latestLog?.latency_ms ?? 0} ms
+                          </strong>
+                        </span>
+                      </div>
+                    </div>
+                    {/* key forces Recharts to re-render fresh data and animate */}
+                    <LatencyChart key={`${m.id}-${monitorLogs.length}`} data={chartData} />
                   </div>
                 </div>
               );
