@@ -24,3 +24,82 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@layer utilities {
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .rotate-x-180 {
+    transform: rotateX(180deg);
+  }
+}
+
+@keyframes flipXDown {
+  0% {
+    opacity: 0;
+    transform: perspective(1200px) rotateX(-75deg);
+  }
+  60% {
+    opacity: 1;
+    transform: perspective(1200px) rotateX(12deg);
+  }
+  85% {
+    transform: perspective(1200px) rotateX(-4deg);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(1200px) rotateX(0deg);
+  }
+}
+
+.animate-flip-down {
+  transform-origin: 50% 0%;
+  animation: flipXDown 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
+}
+
+@layer utilities {
+  .perspective-1200 {
+    perspective: 1200px;
+  }
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .rotate-x-180 {
+    transform: rotateX(180deg);
+  }
+}
+
+@keyframes sentinelFlipDown {
+  0% {
+    opacity: 0.2;
+    transform: perspective(1000px) rotateX(-90deg);
+  }
+  65% {
+    opacity: 1;
+    transform: perspective(1000px) rotateX(16deg);
+  }
+  85% {
+    transform: perspective(1000px) rotateX(-6deg);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(1000px) rotateX(0deg);
+  }
+}
+
+.animate-sentinel-flip {
+  transform-origin: 50% 0%;
+  animation: sentinelFlipDown 0.75s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+}
