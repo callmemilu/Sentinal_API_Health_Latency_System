@@ -13,6 +13,7 @@ export interface MonitorRecord {
   method?: string;
   timeout_ms?: number;
   status?: string;
+  headers?: Record<string, string> | string | null;
 }
 
 /**
@@ -28,6 +29,19 @@ export async function pingEndpoint(monitor: MonitorRecord): Promise<PingResult> 
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const startTime = performance.now();
 
+  let customHeaders: Record<string, string> = {};
+  if (monitor.headers) {
+    if (typeof monitor.headers === "string") {
+      try {
+        customHeaders = JSON.parse(monitor.headers);
+      } catch {
+        console.error(`Failed to parse custom headers for monitor ${monitor.id}`);
+      }
+    } else if (typeof monitor.headers === "object") {
+      customHeaders = monitor.headers as Record<string, string>;
+    }
+  }
+
   let isUp = false;
   let statusCode: number | null = null;
   let latencyMs = 0;
@@ -40,6 +54,7 @@ export async function pingEndpoint(monitor: MonitorRecord): Promise<PingResult> 
       headers: {
         "User-Agent": "Sentinel-Monitor/1.0",
         Accept: "*/*",
+        ...customHeaders,
       },
     });
 
@@ -69,7 +84,7 @@ export async function pingEndpoint(monitor: MonitorRecord): Promise<PingResult> 
   // 1. Insert telemetry record into Supabase ping_logs
   const { error: insertError } = await supabaseAdmin.from("ping_logs").insert({
     monitor_id: monitor.id,
-    is_up: isUp, // <-- Add this line
+    is_up: isUp,
     status_code: statusCode,
     latency_ms: latencyMs,
     error_message: errorMessage,

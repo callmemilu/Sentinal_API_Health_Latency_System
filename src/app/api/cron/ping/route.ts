@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { pingEndpoint } from '@/lib/pinger';
 import { sendDiscordAlert, sendEmailAlert, AlertPayload } from '@/lib/alert-dispatchers';
+import { checkSslCertificate } from '@/lib/ssl';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -15,6 +16,9 @@ interface Monitor {
   timeout_ms: number;
   status: 'Operational' | 'Down';
   created_at: string;
+  headers?: Record<string, string> | string | null;
+  ssl_days_remaining?: number | null;
+  ssl_issuer?: string | null;
 }
 
 interface AlertSetting {
@@ -30,6 +34,7 @@ interface PingLogRow {
   latency_ms: number;
   is_up: boolean;
   error_message: string | null;
+  ssl_days_remaining?: number | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -67,19 +72,24 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 3. Ping all monitors concurrently
+    // 3. Ping all monitors and inspect SSL certificates concurrently
     const pingPromises = monitors.map(async (monitor) => {
-      const probe = await pingEndpoint(monitor);
+      const [probe, sslResult] = await Promise.all([
+        pingEndpoint(monitor),
+        checkSslCertificate(monitor.url, 4000),
+      ]);
 
       return {
         monitor,
         probe,
+        sslResult,
         log: {
           monitor_id: monitor.id,
           status_code: probe.statusCode,
           latency_ms: probe.latencyMs,
           is_up: probe.isUp,
           error_message: probe.errorMessage,
+          ssl_days_remaining: sslResult.daysRemaining,
         } as PingLogRow,
       };
     });
@@ -90,22 +100,22 @@ export async function GET(request: NextRequest) {
     const monitorUpdates: PromiseLike<unknown>[] = [];
     const alertDispatches: Promise<unknown>[] = [];
 
-    // 4. Process state transitions & failure thresholds
+    // 4. Process state transitions, failure thresholds & SSL metadata
     for (const res of settledResults) {
       if (res.status !== 'fulfilled') continue;
 
-      const { monitor, probe, log } = res.value;
+      const { monitor, probe, sslResult, log } = res.value;
       logsToInsert.push(log);
 
       const isCurrentlyUp = monitor.status === 'Operational';
       const alertSetting = alertSettingsMap.get(monitor.id);
       const threshold = alertSetting?.consecutive_failures_threshold || 1;
 
+      let targetStatus: 'Operational' | 'Down' = monitor.status;
+
       // Scenario A: Recovered (Down -> Operational)
       if (!isCurrentlyUp && probe.isUp) {
-        monitorUpdates.push(
-          supabaseAdmin.from('monitors').update({ status: 'Operational' }).eq('id', monitor.id)
-        );
+        targetStatus = 'Operational';
 
         if (alertSetting) {
           const alertPayload: AlertPayload = {
@@ -131,7 +141,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Scenario B: Failing (Operational -> Down)
+      // Scenario B: Failing (Operational -> Down with Flap Suppression)
       if (isCurrentlyUp && !probe.isUp) {
         let shouldTriggerAlert = threshold <= 1;
 
@@ -150,9 +160,7 @@ export async function GET(request: NextRequest) {
         }
 
         if (shouldTriggerAlert) {
-          monitorUpdates.push(
-            supabaseAdmin.from('monitors').update({ status: 'Down' }).eq('id', monitor.id)
-          );
+          targetStatus = 'Down';
 
           if (alertSetting) {
             const alertPayload: AlertPayload = {
@@ -178,9 +186,21 @@ export async function GET(request: NextRequest) {
           }
         }
       }
+
+      // Persist status updates along with fresh SSL audit metadata
+      monitorUpdates.push(
+        supabaseAdmin
+          .from('monitors')
+          .update({
+            status: targetStatus,
+            ssl_days_remaining: sslResult.daysRemaining,
+            ssl_issuer: sslResult.issuer,
+          })
+          .eq('id', monitor.id)
+      );
     }
 
-    // 5. Batch write logs and status updates
+    // 5. Batch write logs and apply monitor updates
     if (logsToInsert.length > 0) {
       await supabaseAdmin.from('ping_logs').insert(logsToInsert);
     }

@@ -2,7 +2,8 @@ import { UserButton } from '@clerk/nextjs';
 import { currentUser } from '@clerk/nextjs/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import InteractiveMonitorItem from '@/components/InteractiveMonitorItem';
-import AddMonitorModal from '@/components/AddMonitorModal';
+import NewMonitorModal from '@/components/NewMonitorModal';
+import AutoRefresh from '@/components/AutoRefresh';
 import {
   Activity,
   CheckCircle2,
@@ -25,6 +26,12 @@ interface PingLog {
   created_at: string;
 }
 
+interface AlertSetting {
+  discord_webhook_url?: string | null;
+  notify_email?: string | null;
+  consecutive_failures_threshold?: number;
+}
+
 interface Monitor {
   id: string;
   user_id: string;
@@ -35,23 +42,28 @@ interface Monitor {
   timeout_ms: number;
   status: 'Operational' | 'Down' | 'Degraded';
   created_at: string;
+  alert_settings?: AlertSetting | AlertSetting[] | null;
 }
 
 export default async function DashboardPage() {
   const user = await currentUser();
   const userId = user?.id;
+  const userEmail = user?.emailAddresses[0]?.emailAddress;
 
-  // 1. Fetch user's monitors
-  const { data: rawMonitors } = await supabaseAdmin
+  // 1. Fetch monitors with joined alert_settings
+  const query = supabaseAdmin
     .from('monitors')
-    .select('*')
-    .eq('user_id', userId || '')
+    .select('*, alert_settings(*)')
     .order('created_at', { ascending: false });
 
-  const monitors: Monitor[] = rawMonitors || [];
+  const { data: rawMonitors } = userId
+    ? await query.or(`user_id.eq.${userId},user_id.is.null`)
+    : await query;
+
+  const monitors: Monitor[] = (rawMonitors as Monitor[]) || [];
   const monitorIds = monitors.map((m) => m.id);
 
-  // 2. Fetch recent telemetry logs (latest 100 entries, reversed for chronological graph)
+  // 2. Fetch recent telemetry logs (latest 100 entries, chronologically ordered)
   let pingLogs: PingLog[] = [];
   if (monitorIds.length > 0) {
     const { data: logs } = await supabaseAdmin
@@ -64,7 +76,7 @@ export default async function DashboardPage() {
     pingLogs = ((logs as PingLog[]) || []).reverse();
   }
 
-  // 3. Compute top overview stats
+  // 3. Compute overview statistics
   const totalMonitors = monitors.length;
   const operationalCount = monitors.filter((m) => m.status === 'Operational').length;
   const downCount = totalMonitors - operationalCount;
@@ -82,6 +94,9 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen p-8 max-w-6xl mx-auto space-y-8">
+      {/* Background poller: refreshes view every 30s when tab is active */}
+      <AutoRefresh intervalMs={30000} />
+
       {/* Header Bar */}
       <header className="flex items-center justify-between pb-6 border-b border-slate-800">
         <div>
@@ -93,7 +108,7 @@ export default async function DashboardPage() {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-xs text-slate-400">
-            {user?.emailAddresses[0]?.emailAddress}
+            {userEmail}
           </span>
           <UserButton />
         </div>
@@ -152,7 +167,7 @@ export default async function DashboardPage() {
             <h2 className="text-lg font-semibold text-white">Monitored Endpoints</h2>
             <p className="text-xs text-slate-500 font-mono">Auto-refreshed via Supabase</p>
           </div>
-          <AddMonitorModal defaultEmail={user?.emailAddresses[0]?.emailAddress} />
+          <NewMonitorModal userId={userId} defaultEmail={userEmail} />
         </div>
 
         {monitors.length > 0 ? (
@@ -170,7 +185,7 @@ export default async function DashboardPage() {
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-slate-800 p-8 text-center text-slate-400 text-sm">
-            No monitors found for this user ID. Use the button above to add your first endpoint.
+            No monitors found. Use the button above to add your first endpoint.
           </div>
         )}
       </section>

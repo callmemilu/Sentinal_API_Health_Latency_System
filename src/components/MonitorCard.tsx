@@ -45,7 +45,7 @@ export default function MonitorCard({ monitor: m, monitorLogs }: MonitorCardProp
   const [isPending, startTransition] = useTransition();
   const isUp = m.status === "Operational";
 
-  const [isFlipped, setIsFlipped] = useState(!isUp);
+  const [isFlipped] = useState(!isUp);
   const latestLog = monitorLogs[monitorLogs.length - 1];
 
   const chartData = monitorLogs.map((l) => ({
